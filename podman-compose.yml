@@ -1,0 +1,141 @@
+version: '3.8'
+
+services:
+  dev-env:
+    container_name: ${CONTAINER_NAME:-universal-dev-env}
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple/}
+    image: ${IMAGE_NAME:-universal-dev:latest}
+    hostname: dev-env
+    stdin_open: true
+    tty: true
+    environment:
+      - TERM=${TERM:-xterm-256color}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+      - http_proxy=${HTTP_PROXY:-}
+      - https_proxy=${HTTPS_PROXY:-}
+      - no_proxy=${NO_PROXY:-}
+      - AWS_PROFILE=${AWS_PROFILE:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - AWS_BEDROCK_REGION=${AWS_BEDROCK_REGION:-}
+      - AWS_BEDROCK_MODEL_ID=${AWS_BEDROCK_MODEL_ID:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_ENTERPRISE_URL=${GITHUB_ENTERPRISE_URL:-}
+      - GIT_USER_NAME=${GIT_USER_NAME:-}
+      - GIT_USER_EMAIL=${GIT_USER_EMAIL:-}
+      - DEBUG=${DEBUG:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - JAVA_OPTS=${JAVA_OPTS:--Xmx2g -Xms512m}
+      - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=4096}
+    volumes:
+      - type: bind
+        source: ${HOME}/.dev-env/data
+        target: /workspace
+      - type: bind
+        source: ${HOME}/.dev-env/config
+        target: /config
+      - type: bind
+        source: ${HOME}/.dev-env/cache
+        target: /cache
+      - type: bind
+        source: ${HOME}/.dev-env/certs
+        target: /certs
+        read_only: true
+      - type: bind
+        source: ${HOME}/.dev-env/ssh
+        target: /home/developer/.ssh
+        read_only: true
+      - type: bind
+        source: ${HOME}/.aws
+        target: /home/developer/.aws
+        read_only: true
+      - workspace-data:/workspace-persistent
+      - cache-data:/cache-persistent
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+      - "${WEB_DEV_PORT:-3000}:3000"
+      - "${API_PORT:-8080}:8080"
+      - "${CUSTOM_PORT:-5000}:5000"
+    networks:
+      - dev-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-4g}
+          cpus: '${CPU_LIMIT:-2.0}'
+        reservations:
+          memory: 1g
+          cpus: '0.5'
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_PTRACE
+
+  jupyter:
+    container_name: ${CONTAINER_NAME:-universal-dev-env}-jupyter
+    image: ${IMAGE_NAME:-universal-dev:latest}
+    hostname: jupyter-env
+    command: >
+      bash -c "
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser 
+        --allow-root --notebook-dir=/workspace 
+        --ServerApp.token='' --ServerApp.password=''
+        --ServerApp.allow_origin='*' --ServerApp.disable_check_xsrf=True
+      "
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_CONFIG_DIR=/home/developer/.jupyter
+      - JUPYTER_DATA_DIR=/home/developer/.local/share/jupyter
+    volumes:
+      - type: bind
+        source: ${HOME}/.dev-env/data
+        target: /workspace
+      - type: bind
+        source: ${HOME}/.dev-env/config
+        target: /config
+      - jupyter-config:/home/developer/.jupyter
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    networks:
+      - dev-network
+    depends_on:
+      - dev-env
+    restart: unless-stopped
+    profiles:
+      - jupyter
+
+networks:
+  dev-network:
+    name: ${NETWORK_NAME:-dev-network}
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  workspace-data:
+    name: ${CONTAINER_NAME:-universal-dev-env}-workspace
+    driver: local
+  cache-data:
+    name: ${CONTAINER_NAME:-universal-dev-env}-cache
+    driver: local
+  jupyter-config:
+    name: ${CONTAINER_NAME:-universal-dev-env}-jupyter-config
+    driver: local

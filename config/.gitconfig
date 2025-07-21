@@ -1,0 +1,177 @@
+# Git Configuration Template for Universal Development Environment
+# This file will be copied to ~/.gitconfig and customized based on environment variables
+
+[user]
+    # These will be set from environment variables GIT_USER_NAME and GIT_USER_EMAIL
+    name = Developer
+    email = developer@example.com
+
+[core]
+    editor = vim
+    autocrlf = false
+    safecrlf = true
+    filemode = true
+    # Increase buffer size for large repositories
+    packedGitLimit = 512m
+    packedGitWindowSize = 512m
+    # Use delta for better diff output if available
+    pager = less -FRX
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = false
+    ff = only
+
+[push]
+    default = simple
+    autoSetupRemote = true
+
+[fetch]
+    prune = true
+    prunetags = true
+
+[branch]
+    autosetupmerge = always
+    autosetuprebase = always
+
+[merge]
+    ff = false
+    conflictstyle = diff3
+    # Use VS Code as merge tool if available
+    tool = vscode
+
+[mergetool "vscode"]
+    cmd = code --wait $MERGED
+
+[diff]
+    # Use delta for better diff output if available
+    external = delta
+    colorMoved = default
+    algorithm = patience
+
+[delta]
+    navigate = true
+    line-numbers = true
+    syntax-theme = Dracula
+
+[interactive]
+    diffFilter = delta --color-only
+
+[status]
+    showUntrackedFiles = all
+
+[log]
+    # Show abbreviated commit hashes and decorations
+    abbrevCommit = true
+    decorate = short
+    # Use delta for git log -p
+    diffFilter = delta --color-only
+
+[alias]
+    # Common shortcuts
+    st = status
+    co = checkout
+    br = branch
+    ci = commit
+    df = diff
+    lg = log --oneline --graph --decorate --all
+    last = log -1 HEAD
+    unstage = reset HEAD --
+    
+    # More advanced aliases
+    hist = log --pretty=format:'%h %ad | %s%d [%an]' --graph --date=short
+    type = cat-file -t
+    dump = cat-file -p
+    
+    # Workflow aliases
+    up = !git remote update -p; git merge --ff-only @{u}
+    save = !git add -A && git commit -m 'SAVEPOINT'
+    wip = !git add -u && git commit -m "WIP"
+    undo = reset HEAD~1 --mixed
+    amend = commit -a --amend
+    wipe = !git add -A && git commit -qm 'WIPE SAVEPOINT' && git reset HEAD~1 --hard
+    
+    # Search aliases
+    grep = grep -Ii
+    gr = grep -Ii
+    
+    # List aliases
+    aliases = config --get-regexp alias
+
+[color]
+    ui = auto
+    branch = auto
+    diff = auto
+    interactive = auto
+    status = auto
+
+[color "branch"]
+    current = yellow reverse
+    local = yellow
+    remote = green
+
+[color "diff"]
+    meta = yellow bold
+    frag = magenta bold
+    old = red bold
+    new = green bold
+
+[color "status"]
+    added = yellow
+    changed = green
+    untracked = cyan
+
+# Enterprise Git configuration (uncomment and customize as needed)
+[http]
+    # SSL verification (set to false only if absolutely necessary in enterprise environments)
+    sslVerify = true
+    # Custom CA bundle for enterprise environments
+    # sslCAInfo = /certs/ca-bundle.crt
+    # Proxy settings
+    # proxy = http://proxy.company.com:8080
+    # Timeout settings for slow networks
+    lowSpeedLimit = 1000
+    lowSpeedTime = 30
+    postBuffer = 524288000
+
+[https]
+    # HTTPS-specific settings (inherits from http by default)
+    # proxy = http://proxy.company.com:8080
+
+# GitHub configuration (will be customized based on environment)
+[url "https://github.com/"]
+    insteadOf = git://github.com/
+    insteadOf = ssh://git@github.com/
+
+# GitHub Enterprise configuration (uncomment and customize for enterprise environments)
+# [url "https://github.company.com/"]
+#     insteadOf = git://github.company.com/
+#     insteadOf = ssh://git@github.company.com/
+
+# Credential configuration
+[credential]
+    # Use the credential helper appropriate for the platform
+    helper = store
+    # For enterprise environments, you might want to use:
+    # helper = cache --timeout=3600
+    # helper = !aws codecommit credential-helper $@
+    # UseHttpPath = true
+
+# GPG signing (uncomment if you want to sign commits)
+# [commit]
+#     gpgsign = true
+# [gpg]
+#     program = gpg2
+
+# Large File Storage (LFS) configuration
+[filter "lfs"]
+    clean = git-lfs clean -- %f
+    smudge = git-lfs smudge -- %f
+    process = git-lfs filter-process
+    required = true
+
+# Include additional configuration if it exists
+[include]
+    path = ~/.gitconfig.local

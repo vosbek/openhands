@@ -1,0 +1,367 @@
+# Universal Development Environment Containerfile
+# Bulletproof multi-stage build with comprehensive enterprise support
+# Optimized for OpenHands development with AWS Bedrock integration
+
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE} as base
+
+# Build arguments for enterprise environments
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG PIP_INDEX_URL=https://pypi.org/simple/
+ARG MAVEN_REPOSITORY_URL=https://repo1.maven.org/maven2/
+
+# Set environment variables for proxy and build
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV NO_PROXY=${NO_PROXY}
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Essential system setup and security updates
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    wget \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    apt-transport-https \
+    unzip \
+    zip \
+    git \
+    vim \
+    nano \
+    htop \
+    tree \
+    jq \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install custom certificates
+COPY certs/* /usr/local/share/ca-certificates/ 2>/dev/null || true
+RUN update-ca-certificates 2>/dev/null || true
+
+# Stage 2: Java Development Kit
+FROM base as java-stage
+
+# Install OpenJDK 21 (LTS) for better compatibility
+RUN apt-get update && apt-get install -y \
+    openjdk-21-jdk \
+    openjdk-21-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Verify Java installation
+RUN java -version && javac -version
+
+# Stage 3: Maven Build Tool
+FROM java-stage as maven-stage
+
+ARG MAVEN_VERSION=3.9.8
+ARG MAVEN_URL=https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz
+
+# Download and install Maven with verification
+RUN wget --progress=dot:giga "${MAVEN_URL}" -O /tmp/maven.tar.gz \
+    && wget "${MAVEN_URL}.sha512" -O /tmp/maven.tar.gz.sha512 \
+    && cd /tmp && sha512sum -c maven.tar.gz.sha512 \
+    && tar -xzf maven.tar.gz -C /opt \
+    && ln -sf /opt/apache-maven-${MAVEN_VERSION} /opt/maven \
+    && rm -f maven.tar.gz maven.tar.gz.sha512
+
+ENV MAVEN_HOME=/opt/maven
+ENV PATH="${MAVEN_HOME}/bin:${PATH}"
+
+# Configure Maven with enterprise repository if specified
+RUN if [ -n "${MAVEN_REPOSITORY_URL}" ] && [ "${MAVEN_REPOSITORY_URL}" != "https://repo1.maven.org/maven2/" ]; then \
+        mkdir -p /opt/maven/conf && \
+        cat > /opt/maven/conf/settings.xml << EOF && \
+<?xml version="1.0" encoding="UTF-8"?> \
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" \
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" \
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 \
+                              http://maven.apache.org/xsd/settings-1.0.0.xsd"> \
+    <mirrors> \
+        <mirror> \
+            <id>enterprise-repo</id> \
+            <name>Enterprise Repository</name> \
+            <url>${MAVEN_REPOSITORY_URL}</url> \
+            <mirrorOf>central</mirrorOf> \
+        </mirror> \
+    </mirrors> \
+</settings> \
+EOF \
+    fi
+
+RUN mvn --version
+
+# Stage 4: Python Development Environment
+FROM maven-stage as python-stage
+
+# Install Python 3.12 (latest stable)
+RUN apt-get update && apt-get install -y \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    python3-setuptools \
+    python3-wheel \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create python3 symlink
+RUN ln -sf /usr/bin/python3.12 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Configure pip for enterprise environments
+RUN mkdir -p /etc/pip
+COPY config/pip.conf /etc/pip/pip.conf
+
+# Upgrade pip and install essential packages
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install --no-cache-dir \
+        virtualenv \
+        pipenv \
+        poetry \
+        jupyterlab \
+        notebook \
+        ipykernel \
+        boto3 \
+        awscli \
+        requests \
+        black \
+        flake8 \
+        pytest \
+        mypy \
+        pandas \
+        numpy \
+        matplotlib \
+        seaborn
+
+# Install AWS CLI v2 for better Bedrock support
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip awscliv2.zip \
+    && ./aws/install --update \
+    && rm -rf aws awscliv2.zip
+
+# Verify installations
+RUN python --version && pip --version && aws --version
+
+# Stage 5: Node.js Development Environment
+FROM python-stage as node-stage
+
+# Install Node.js 20 LTS
+ARG NODE_VERSION=20
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure npm for enterprise environments
+COPY config/.npmrc /etc/npmrc
+
+# Set npm configurations programmatically
+RUN if [ -n "${NPM_REGISTRY}" ] && [ "${NPM_REGISTRY}" != "https://registry.npmjs.org/" ]; then \
+        npm config set registry "${NPM_REGISTRY}" --location=global; \
+    fi
+
+RUN if [ -n "${HTTP_PROXY}" ]; then \
+        npm config set proxy "${HTTP_PROXY}" --location=global; \
+    fi
+
+RUN if [ -n "${HTTPS_PROXY}" ]; then \
+        npm config set https-proxy "${HTTPS_PROXY}" --location=global; \
+    fi
+
+# Install global npm packages
+RUN npm install -g \
+    yarn \
+    pnpm \
+    typescript \
+    ts-node \
+    @types/node \
+    nodemon \
+    pm2 \
+    create-react-app \
+    @angular/cli \
+    @vue/cli \
+    eslint \
+    prettier
+
+# Verify installations
+RUN node --version && npm --version && yarn --version
+
+# Stage 6: Additional Development Tools
+FROM node-stage as tools-stage
+
+# Install additional development tools
+RUN apt-get update && apt-get install -y \
+    openssh-client \
+    rsync \
+    zip \
+    unzip \
+    tar \
+    gzip \
+    bzip2 \
+    xz-utils \
+    file \
+    less \
+    which \
+    procps \
+    psmisc \
+    lsof \
+    strace \
+    ltrace \
+    tcpdump \
+    netcat-openbsd \
+    telnet \
+    dnsutils \
+    iputils-ping \
+    iproute2 \
+    net-tools \
+    iotop \
+    iftop \
+    ncdu \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Docker CLI for Docker-in-Docker scenarios
+RUN curl -fsSL https://get.docker.com | sh || true
+
+# Install additional tools for cloud development
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x kubectl \
+    && mv kubectl /usr/local/bin/
+
+# Install terraform for infrastructure as code
+ARG TERRAFORM_VERSION=1.8.5
+RUN wget "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
+    && unzip "terraform_${TERRAFORM_VERSION}_linux_amd64.zip" \
+    && mv terraform /usr/local/bin/ \
+    && rm "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+
+# Stage 7: User Setup and Security
+FROM tools-stage as user-stage
+
+ARG USER_UID=1000
+ARG USER_GID=1000
+ARG USERNAME=developer
+
+# Create user with proper permissions
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} --create-home --shell /bin/bash ${USERNAME} \
+    && usermod -aG sudo ${USERNAME} \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && echo "${USERNAME}:${USERNAME}" | chpasswd
+
+# Switch to user context
+USER ${USERNAME}
+WORKDIR /home/${USERNAME}
+
+# Set up user environment
+RUN mkdir -p /home/${USERNAME}/.local/bin \
+    && mkdir -p /home/${USERNAME}/.config \
+    && mkdir -p /home/${USERNAME}/.cache \
+    && mkdir -p /home/${USERNAME}/.aws \
+    && mkdir -p /home/${USERNAME}/.ssh \
+    && mkdir -p /home/${USERNAME}/.jupyter \
+    && mkdir -p /home/${USERNAME}/.vscode-server
+
+# Configure npm prefix for user
+RUN npm config set prefix "/home/${USERNAME}/.local"
+
+# Install user-specific Python packages
+RUN python -m pip install --user --no-cache-dir \
+    awscli \
+    boto3 \
+    litellm \
+    anthropic \
+    openai
+
+# Configure Jupyter
+RUN jupyter lab --generate-config
+
+# Copy configuration files
+COPY --chown=${USERNAME}:${USERNAME} config/.bashrc /home/${USERNAME}/.bashrc
+COPY --chown=${USERNAME}:${USERNAME} config/.gitconfig /home/${USERNAME}/.gitconfig.template
+COPY --chown=${USERNAME}:${USERNAME} config/entrypoint.sh /home/${USERNAME}/entrypoint.sh
+COPY --chown=${USERNAME}:${USERNAME} scripts/ /home/${USERNAME}/scripts/
+
+# Make scripts executable
+RUN chmod +x /home/${USERNAME}/entrypoint.sh \
+    && chmod +x /home/${USERNAME}/scripts/*.sh
+
+# Set up PATH
+ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+
+# Configure environment variables
+ENV JUPYTER_CONFIG_DIR=/home/${USERNAME}/.jupyter
+ENV JUPYTER_DATA_DIR=/home/${USERNAME}/.local/share/jupyter
+ENV SHELL=/bin/bash
+ENV EDITOR=vim
+ENV PAGER=less
+
+# Stage 8: OpenHands Integration
+FROM user-stage as openhands-stage
+
+# Install OpenHands dependencies
+RUN python -m pip install --user --no-cache-dir \
+    agenthub \
+    litellm \
+    docker \
+    pydantic \
+    fastapi \
+    uvicorn \
+    websockets \
+    rich \
+    typer
+
+# Configure OpenHands-specific settings
+ENV OPENHANDS_WORKSPACE=/workspace
+ENV OPENHANDS_CONFIG_DIR=/config
+ENV OPENHANDS_CACHE_DIR=/cache
+
+# Create OpenHands workspace structure
+RUN mkdir -p /home/${USERNAME}/openhands/{agents,tools,plugins}
+
+# Configure AWS for Bedrock (create config templates)
+RUN cat > /home/${USERNAME}/.aws/config << 'EOF'
+[default]
+region = us-east-1
+output = json
+
+[profile bedrock]
+region = us-east-1
+output = json
+EOF
+
+# Stage 9: Final Configuration
+FROM openhands-stage as final
+
+# Create volume mount points
+RUN sudo mkdir -p /workspace /config /cache /certs /logs \
+    && sudo chown ${USERNAME}:${USERNAME} /workspace /config /cache /logs \
+    && sudo chmod 755 /workspace /config /cache /logs
+
+# Expose ports
+EXPOSE 3000 8888 8080 5000
+
+# Add health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8888/api/status || curl -f http://localhost:3000/api/health || exit 1
+
+# Set up entrypoint
+ENTRYPOINT ["/home/developer/entrypoint.sh"]
+CMD ["/bin/bash"]
+
+# Add metadata
+LABEL maintainer="OpenHands Universal Dev Environment" \
+      version="2.0.0" \
+      description="Universal development environment with Java, Python, Node.js, and AWS Bedrock support" \
+      platform="multi-platform" \
+      enterprise="true" \
+      openhands-compatible="true"
